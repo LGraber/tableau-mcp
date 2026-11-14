@@ -304,9 +304,30 @@ const connectionSchema = z.object({
   connectionPassword: z.string(),
 });
 
+export const textFileOptionsSchema = z
+  .object({
+    separator: z
+      .string()
+      .length(1)
+      .describe('Single-character field separator, e.g. "," or "\\t".'),
+    hasHeader: z.boolean().describe('Whether the first row contains column names.'),
+    characterSet: z.string().describe('Character set of the file, e.g. "UTF-8".'),
+    textQualifier: z.string().length(1).describe("Single-character text qualifier, e.g. '\"'."),
+    locale: z.string().describe('Locale used to parse numbers and dates, e.g. "en_US".'),
+  })
+  .partial();
+
+export const fileUploadSourceSchema = z.object({
+  uploadId: z.string().nonempty().describe('The uploadId returned by upload-data-file.'),
+  fileType: z.literal('TEXT'),
+  fileName: z.string().nonempty().describe('The original file name, including extension.'),
+  textOptions: textFileOptionsSchema.optional(),
+});
+
 export const datasourceSchema = z.object({
-  datasourceLuid: z.string().nonempty(),
+  datasourceLuid: z.string().nonempty().optional(),
   connections: z.array(connectionSchema).optional(),
+  fileUpload: fileUploadSourceSchema.optional(),
 });
 
 const returnFormatSchema = z.enum(['OBJECTS', 'ARRAYS']);
@@ -462,6 +483,7 @@ export const queryPermissionsOutputSchema = z
 
 // Exported Types
 export type Datasource = z.infer<typeof datasourceSchema>;
+export type FileUploadSource = z.infer<typeof fileUploadSourceSchema>;
 export type DataType = z.infer<typeof dataTypeSchema>;
 
 export type Field = z.infer<typeof fieldSchema>;

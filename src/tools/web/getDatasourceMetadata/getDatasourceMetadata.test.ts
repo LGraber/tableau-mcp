@@ -259,6 +259,12 @@ const mocks = vi.hoisted(() => ({
   mockQueryDatasource: vi.fn(),
   mockQueryWorkbookConnections: vi.fn(),
   mockGetWorkbook: vi.fn(),
+  mockIsAdhocFileUploadEnabled: vi.fn(),
+}));
+
+vi.mock('../fileUploads/fileUploadDatasource.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../fileUploads/fileUploadDatasource.js')>()),
+  isAdhocFileUploadEnabled: mocks.mockIsAdhocFileUploadEnabled,
 }));
 
 vi.mock('../../../restApiInstance.js', () => ({
@@ -298,6 +304,7 @@ describe('getDatasourceMetadataTool', () => {
     // Default the REST classifier to a non-authoritative failure so tests that don't exercise the
     // published-vs-embedded disambiguation leave datasourceType unset unless they opt in.
     mocks.mockTryQueryDatasource.mockResolvedValue(Err('error'));
+    mocks.mockIsAdhocFileUploadEnabled.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -425,14 +432,14 @@ describe('getDatasourceMetadataTool', () => {
     });
   });
 
-  it('should create a tool instance with correct properties', () => {
+  it('should create a tool instance with correct properties', async () => {
     const getDatasourceMetadataTool = getGetDatasourceMetadataTool(
       new WebMcpServer(),
       testProductVersion,
     );
     expect(getDatasourceMetadataTool.name).toBe('get-datasource-metadata');
     expect(getDatasourceMetadataTool.description).toBeInstanceOf(Provider);
-    expect(getDatasourceMetadataTool.paramsSchema).toMatchObject({
+    expect(await Provider.from(getDatasourceMetadataTool.paramsSchema)).toMatchObject({
       datasourceLuid: expect.any(Object),
     });
     expect(getDatasourceMetadataTool.annotations).toMatchObject({
@@ -1192,7 +1199,13 @@ describe('getDatasourceMetadataTool', () => {
     const callback = await Provider.from(getDatasourceMetadataTool.callback);
 
     const result = await callback(
-      { datasourceLuid: '', workbookLuid: undefined, fieldNames: undefined, search: undefined },
+      {
+        datasourceLuid: '',
+        fileUpload: undefined,
+        workbookLuid: undefined,
+        fieldNames: undefined,
+        search: undefined,
+      },
       getMockRequestHandlerExtra(),
     );
 
@@ -1316,6 +1329,84 @@ describe('getDatasourceMetadataTool', () => {
       expect(mocks.mockReadMetadata).not.toHaveBeenCalled();
     });
   });
+  describe('fileUpload', () => {
+    const fileUpload = {
+      uploadId: '9:abc',
+      fileType: 'TEXT' as const,
+      fileName: 'sales.csv',
+    };
+
+    async function callWith(args: {
+      datasourceLuid?: string;
+      fileUpload?: typeof fileUpload;
+    }): Promise<CallToolResult> {
+      const tool = getGetDatasourceMetadataTool(new WebMcpServer(), testProductVersion);
+      const callback = await Provider.from(tool.callback);
+      return await callback(
+        {
+          datasourceLuid: args.datasourceLuid,
+          fileUpload: args.fileUpload,
+          workbookLuid: undefined,
+          fieldNames: undefined,
+          search: undefined,
+        },
+        getMockRequestHandlerExtra(),
+      );
+    }
+
+    it('reads metadata from the uploaded file only', async () => {
+      mocks.mockReadMetadata.mockResolvedValue(new Ok(mockReadMetadataResponses.success));
+
+      const result = await callWith({ fileUpload });
+
+      expect(result.isError).toBe(false);
+      expect(mocks.mockReadMetadata).toHaveBeenCalledWith({ datasource: { fileUpload } });
+      expect(mocks.mockGetDatasourceModel).not.toHaveBeenCalled();
+      expect(mocks.mockGraphql).not.toHaveBeenCalled();
+      invariant(result.content[0].type === 'text');
+      const responseData = JSON.parse(result.content[0].text);
+      expect(responseData.datasourceType).toBeUndefined();
+      expect(flattenResponseFields(responseData).length).toBeGreaterThan(0);
+    });
+
+    it('returns a clear error when the upload is not found', async () => {
+      mocks.mockReadMetadata.mockResolvedValue(new Err('file-upload-not-found'));
+
+      const result = await callWith({ fileUpload });
+
+      expect(result.isError).toBe(true);
+      invariant(result.content[0].type === 'text');
+      expect(result.content[0].text).toContain('The uploaded file was not found');
+    });
+
+    it('rejects both datasourceLuid and fileUpload', async () => {
+      const result = await callWith({ datasourceLuid: 'test-luid', fileUpload });
+
+      expect(result.isError).toBe(true);
+      invariant(result.content[0].type === 'text');
+      expect(result.content[0].text).toBe('Provide either datasourceLuid or fileUpload, not both.');
+      expect(mocks.mockReadMetadata).not.toHaveBeenCalled();
+    });
+
+    it('rejects fileUpload when the feature is disabled', async () => {
+      mocks.mockIsAdhocFileUploadEnabled.mockResolvedValue(false);
+
+      const result = await callWith({ fileUpload });
+
+      expect(result.isError).toBe(true);
+      invariant(result.content[0].type === 'text');
+      expect(result.content[0].text).toBe('fileUpload is not supported by this MCP server.');
+      expect(mocks.mockReadMetadata).not.toHaveBeenCalled();
+    });
+
+    it('only advertises fileUpload when the feature is enabled', async () => {
+      const tool = getGetDatasourceMetadataTool(new WebMcpServer(), testProductVersion);
+      expect(await Provider.from(tool.paramsSchema)).toHaveProperty('fileUpload');
+
+      mocks.mockIsAdhocFileUploadEnabled.mockResolvedValue(false);
+      expect(await Provider.from(tool.paramsSchema)).not.toHaveProperty('fileUpload');
+    });
+  });
 });
 
 async function getToolResult(
@@ -1334,6 +1425,7 @@ async function getToolResult(
   return await callback(
     {
       datasourceLuid: 'test-luid',
+      fileUpload: undefined,
       workbookLuid: params.workbookLuid,
       fieldNames: params.fieldNames,
       search: params.search,

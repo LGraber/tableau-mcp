@@ -8,6 +8,7 @@ import { getRequestDatasourceUploadTool } from './datasources/requestDatasourceU
 import { getConfirmUpdateCloudExtractRefreshTaskTool } from './extractRefreshTasks/confirmUpdateCloudExtractRefreshTask.js';
 import { getListExtractRefreshTasksTool } from './extractRefreshTasks/listExtractRefreshTasks.js';
 import { getUpdateCloudExtractRefreshTaskTool } from './extractRefreshTasks/updateCloudExtractRefreshTask.js';
+import { getUploadDataFileTool } from './fileUploads/uploadDataFile.js';
 import { getCancelFlowRunTool } from './flows/cancelFlowRun/cancelFlowRun.js';
 import { getDescribeFlowTool } from './flows/describeFlow/describeFlow.js';
 import { getGetFlowTool } from './flows/getFlow/getFlow.js';
@@ -92,6 +93,7 @@ export const webToolFactories = [
   getDownloadWorkbookTool,
   getGetWorkbookTool,
   getRequestWorkbookUploadTool,
+  getUploadDataFileTool,
   getPublishWorkbookTool,
   getMoveWorkbookTool,
   getGetViewTool,

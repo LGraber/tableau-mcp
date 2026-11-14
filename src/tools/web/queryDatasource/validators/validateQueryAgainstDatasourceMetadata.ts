@@ -33,6 +33,7 @@ export async function validateQueryAgainstDatasourceMetadata(
     const readMetadataResult = await vizqlDataServiceMethods.readMetadata({
       datasource: {
         datasourceLuid: datasource.datasourceLuid,
+        fileUpload: datasource.fileUpload,
       },
     });
 

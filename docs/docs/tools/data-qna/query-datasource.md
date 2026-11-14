@@ -159,6 +159,13 @@ embedded data source's `datasourceLuid` (e.g. a connection's datasource ID from
   [tool scoping](../../configuration/mcp-config/tool-scoping.md#embedded-data-sources) is enabled,
   also pass [`workbookLuid`](#workbookluid).
 
+<hr />
+
+### `fileUpload`
+
+The `fileUpload` object returned by [Upload Data File](upload-data-file.md). Pass it instead of
+`datasourceLuid` to query an uploaded file. Requires the `adhoc-file-upload` feature.
+
 ## Example result
 
 ```json

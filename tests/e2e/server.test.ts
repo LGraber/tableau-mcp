@@ -19,6 +19,7 @@ const knowledgeWriteToolsEnabled = Boolean(features['knowledge-write-tools']);
 let knowledgeReadExpected: boolean;
 let knowledgeWriteExpected: boolean;
 const tableauDataAppsEnabled = Boolean(features['data-apps']);
+const adhocFileUploadEnabled = Boolean(features['adhoc-file-upload']);
 const adminToolsFlagEnabled = Boolean(features['admin-tools']);
 const flowWriteTools: ReadonlyArray<WebToolName> = ['run-flow', 'run-flow-task', 'cancel-flow-run'];
 
@@ -137,6 +138,10 @@ describe('server', () => {
       // Filter out data-app tools if they are not enabled (data-apps feature flag)
       if (!tableauDataAppsEnabled) {
         expectedToolNames = expectedToolNames.filter((name) => !dataAppTools.includes(name));
+      }
+
+      if (!adhocFileUploadEnabled) {
+        expectedToolNames = expectedToolNames.filter((name) => name !== 'upload-data-file');
       }
 
       // Write tools follow FLOW_WRITE_TOOLS_ENABLED when set, otherwise their flag.
@@ -345,6 +350,10 @@ describe('server', () => {
       // Filter out data-app tools if they are not enabled (data-apps feature flag)
       if (!tableauDataAppsEnabled) {
         expectedWebToolNames = expectedWebToolNames.filter((name) => !dataAppTools.includes(name));
+      }
+
+      if (!adhocFileUploadEnabled) {
+        expectedWebToolNames = expectedWebToolNames.filter((name) => name !== 'upload-data-file');
       }
 
       // Write tools follow FLOW_WRITE_TOOLS_ENABLED when set, otherwise their flag.

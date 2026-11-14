@@ -376,6 +376,10 @@ const toolScopeMap: Record<
     mcp: ['tableau:mcp:datasource:read'],
     api: new Set(['tableau:viz_data_service:read', ...RESOURCE_ACCESS_CHECKER_REQUIRED_API_SCOPES]),
   },
+  'upload-data-file': {
+    mcp: ['tableau:mcp:datasource:read'],
+    api: new Set(['tableau:file_uploads:create']),
+  },
   'get-datasource-metadata': {
     mcp: ['tableau:mcp:datasource:read'],
     api: new Set([
@@ -586,6 +590,7 @@ async function getEnabledToolNames(clientId?: string): Promise<Set<WebToolName>>
   const knowledgeToolsEnabled = await isKnowledgeToolsEnabled(config);
   const knowledgeWriteToolsEnabled = await isKnowledgeWriteToolsEnabled(config);
   const dataAppsEnabled = await featureGate.isFeatureEnabled('data-apps');
+  const adhocFileUploadEnabled = await featureGate.isFeatureEnabled('adhoc-file-upload');
   const adminToolsEnabled = await isAdminToolsEnabled(config);
 
   // Remove disabled tools based on feature flags
@@ -664,6 +669,10 @@ async function getEnabledToolNames(clientId?: string): Promise<Set<WebToolName>>
     if (!isDataAppVersionSupported(productVersion)) {
       enabledTools.delete('scaffold-data-app');
     }
+  }
+
+  if (!adhocFileUploadEnabled) {
+    enabledTools.delete('upload-data-file');
   }
 
   return enabledTools;

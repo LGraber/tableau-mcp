@@ -17,11 +17,13 @@ export function validateQuery({
   query,
   rules,
 }: {
-  datasourceLuid: string;
+  datasourceLuid?: string;
   query: Query;
   rules: ToolRules;
 }): void {
-  validateDatasourceLuid({ datasourceLuid });
+  if (datasourceLuid !== undefined) {
+    validateDatasourceLuid({ datasourceLuid });
+  }
 
   const { fields, filters } = query;
   validateFields(fields);

@@ -326,6 +326,7 @@ describe('queryDatasourceTool', () => {
         workbookLuid: undefined,
         limit: undefined,
         interpretFieldCaptionsAsFieldNames: undefined,
+        fileUpload: undefined,
       },
       getMockRequestHandlerExtra(),
     );
@@ -704,6 +705,7 @@ describe('queryDatasourceTool', () => {
           workbookLuid: undefined,
           limit: undefined,
           interpretFieldCaptionsAsFieldNames: undefined,
+          fileUpload: undefined,
         },
         getMockRequestHandlerExtra(),
       );
@@ -753,6 +755,7 @@ describe('queryDatasourceTool', () => {
           workbookLuid: undefined,
           limit: undefined,
           interpretFieldCaptionsAsFieldNames: undefined,
+          fileUpload: undefined,
         },
         getMockRequestHandlerExtra(),
       );
@@ -796,6 +799,7 @@ describe('queryDatasourceTool', () => {
           workbookLuid: undefined,
           limit: undefined,
           interpretFieldCaptionsAsFieldNames: undefined,
+          fileUpload: undefined,
         },
         getMockRequestHandlerExtra(),
       );
@@ -836,6 +840,7 @@ describe('queryDatasourceTool', () => {
           workbookLuid: undefined,
           limit: undefined,
           interpretFieldCaptionsAsFieldNames: undefined,
+          fileUpload: undefined,
         },
         getMockRequestHandlerExtra(),
       );
@@ -896,6 +901,7 @@ describe('queryDatasourceTool', () => {
           workbookLuid: undefined,
           limit: undefined,
           interpretFieldCaptionsAsFieldNames: undefined,
+          fileUpload: undefined,
         },
         getMockRequestHandlerExtra(),
       );
@@ -1046,6 +1052,7 @@ async function getToolResult({
       workbookLuid,
       limit,
       interpretFieldCaptionsAsFieldNames,
+      fileUpload: undefined,
     },
     getMockRequestHandlerExtra(),
   );

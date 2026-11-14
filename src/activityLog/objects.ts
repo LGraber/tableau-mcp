@@ -52,6 +52,7 @@ export const activityLogObjectSources: Record<WebToolName, ObjectSource | null> 
   'list-users': null,
   'list-workbooks': null,
   'request-workbook-upload': null,
+  'upload-data-file': null,
   'publish-workbook': null,
   'request-datasource-upload': null,
   'publish-datasource': null,

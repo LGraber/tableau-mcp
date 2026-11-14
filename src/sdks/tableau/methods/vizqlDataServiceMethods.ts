@@ -29,6 +29,15 @@ export function isWorkbookDatasourceNotEnabled(error: TableauError | undefined):
   );
 }
 
+export const FILE_UPLOAD_NOT_FOUND_MESSAGE =
+  'The uploaded file was not found. It may have expired or been uploaded by a different user. Call upload-data-file again and use the new fileUpload.';
+
+function getFileUploadNotFoundMessage(error: TableauError | undefined): string {
+  return error?.message
+    ? `${FILE_UPLOAD_NOT_FOUND_MESSAGE} (${error.message})`
+    : FILE_UPLOAD_NOT_FOUND_MESSAGE;
+}
+
 export type VdsQueryError =
   | { type: 'feature-disabled' }
   | { type: 'workbook-datasource-not-enabled' }
@@ -70,6 +79,14 @@ export default class VizqlDataServiceMethods extends AuthenticatedMethods<
         if (isWorkbookDatasourceNotEnabled(error.response.data)) {
           return Err({ type: 'workbook-datasource-not-enabled' });
         }
+        if (error.response.status === 404 && queryRequest.datasource.fileUpload) {
+          return Err({
+            type: 'api-error',
+            message: getFileUploadNotFoundMessage(error.response.data),
+            httpStatus: 404,
+            errorCode: error.response.data.errorCode,
+          });
+        }
         if (error.response.status === 404) {
           return Err({ type: 'feature-disabled' });
         }
@@ -99,7 +116,12 @@ export default class VizqlDataServiceMethods extends AuthenticatedMethods<
    */
   readMetadata = async (
     readMetadataRequest: ReadMetadataRequest,
-  ): Promise<Result<MetadataResponse, 'feature-disabled' | 'workbook-datasource-not-enabled'>> => {
+  ): Promise<
+    Result<
+      MetadataResponse,
+      'feature-disabled' | 'workbook-datasource-not-enabled' | 'file-upload-not-found'
+    >
+  > => {
     try {
       return Ok(await this._apiClient.readMetadata(readMetadataRequest, { ...this.authHeader }));
     } catch (error) {
@@ -108,6 +130,9 @@ export default class VizqlDataServiceMethods extends AuthenticatedMethods<
         // 404 branch to keep the gate from being mislabeled as VizQL-disabled.
         if (isWorkbookDatasourceNotEnabled(error.response.data)) {
           return Err('workbook-datasource-not-enabled');
+        }
+        if (error.response.status === 404 && readMetadataRequest.datasource.fileUpload) {
+          return Err('file-upload-not-found');
         }
         if (error.response.status === 404) {
           return Err('feature-disabled');

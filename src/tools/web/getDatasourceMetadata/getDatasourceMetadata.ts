@@ -1,5 +1,5 @@
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { Ok } from 'ts-results-es';
+import { Err, Ok } from 'ts-results-es';
 import { z } from 'zod';
 
 import {
@@ -11,13 +11,22 @@ import {
 import { useRestApi } from '../../../restApiInstance.js';
 import { luidSchema } from '../../../sdks/routeSafety/ids.js';
 import { GraphQLResponse } from '../../../sdks/tableau/apis/metadataApi.js';
+import { FILE_UPLOAD_NOT_FOUND_MESSAGE } from '../../../sdks/tableau/methods/vizqlDataServiceMethods.js';
 import { RestApi } from '../../../sdks/tableau/restApi.js';
 import { isEmbeddedDatasource } from '../../../sdks/tableau/types/dataSource.js';
 import { ProductVersion } from '../../../sdks/tableau/types/serverInfo.js';
 import { SiteRole } from '../../../sdks/tableau/types/user.js';
 import { WebMcpServer } from '../../../server.web.js';
+import { getExceptionMessage } from '../../../utils/getExceptionMessage.js';
 import { getResultForTableauVersion } from '../../../utils/isTableauVersionAtLeast.js';
 import { Provider } from '../../../utils/provider.js';
+import {
+  DatasourceTarget,
+  FILE_UPLOAD_DESCRIPTION_SUFFIX,
+  fileUploadParamSchema,
+  isAdhocFileUploadEnabled,
+  resolveDatasourceTarget,
+} from '../fileUploads/fileUploadDatasource.js';
 import { getVizqlDataServiceDisabledError } from '../getVizqlDataServiceDisabledError.js';
 import { resourceAccessChecker } from '../resourceAccessChecker.js';
 import { ToolRules, WebTool } from '../tool.js';
@@ -94,7 +103,7 @@ export const getGraphqlQuery = (datasourceLuid: string): string => `
     }
   }`;
 
-const paramsSchema = {
+const publishedDatasourceParamsSchema = {
   datasourceLuid: luidSchema,
   fieldNames: z
     .array(z.string().nonempty())
@@ -114,6 +123,12 @@ const paramsSchema = {
     .describe(
       'Required to access an embedded (workbook) data source: the LUID of the workbook it belongs to, e.g. the workbook LUID passed to get-workbook. Omit for published data sources.',
     ),
+};
+
+const paramsSchema = {
+  ...publishedDatasourceParamsSchema,
+  datasourceLuid: luidSchema.optional(),
+  fileUpload: fileUploadParamSchema,
 };
 
 export type GetDatasourceMetadataError =
@@ -153,8 +168,8 @@ export const getGetDatasourceMetadataTool = (
     server,
     name: 'get-datasource-metadata',
     minRequiredRole: SiteRole.VIEWER,
-    description: new Provider(
-      () =>
+    description: new Provider(async () => {
+      const description =
         'Retrieve metadata for all or selected fields. Use fieldNames for known exact captions, or search for a targeted caption/description lookup. Search is literal: related fields and formula dependencies may not match. For broad discovery or uncertain terminology, omit selectors; fetch referenced fields when needed. Selectors filter fields only; datasource descriptions, parameters and model relationships are unchanged. Inspect mcp.resultInfo for matching counts and unknown field names.\n' +
         getResultForTableauVersion({
           productVersion,
@@ -163,9 +178,18 @@ export const getGetDatasourceMetadataTool = (
             default: getDatasourceMetadataToolDescription,
           },
         }) +
-        (rules.fieldNamesAreUnavailable ? '' : fieldNameQueryGuidance),
+        (rules.fieldNamesAreUnavailable ? '' : fieldNameQueryGuidance);
+      return (await isAdhocFileUploadEnabled())
+        ? `${description}${FILE_UPLOAD_DESCRIPTION_SUFFIX}
+    For an uploaded file, only the VizQL Data Service field metadata is returned; there is no datasource model or Metadata API enrichment.`
+        : description;
+    }),
+    // Without the flag only the published-datasource subset is advertised; the callback handles both.
+    paramsSchema: new Provider(async () =>
+      (await isAdhocFileUploadEnabled())
+        ? paramsSchema
+        : (publishedDatasourceParamsSchema as unknown as typeof paramsSchema),
     ),
-    paramsSchema,
     annotations: {
       title: 'Get Datasource Metadata',
       readOnlyHint: true,
@@ -174,22 +198,50 @@ export const getGetDatasourceMetadataTool = (
       openWorldHint: false,
     },
     callback: async (
-      { datasourceLuid, workbookLuid, fieldNames, search },
+      { datasourceLuid, fileUpload, workbookLuid, fieldNames, search },
       extra,
     ): Promise<CallToolResult> => {
-      const query = getGraphqlQuery(datasourceLuid);
-
       return await getDatasourceMetadataTool.logAndExecute({
         extra,
-        args: { datasourceLuid, workbookLuid, fieldNames, search },
+        args: { datasourceLuid, fileUpload, workbookLuid, fieldNames, search },
         callback: async () => {
-          if (!datasourceLuid) {
-            return new ArgsValidationError('datasourceLuid must be a non-empty string.').toErr();
+          let target: DatasourceTarget;
+          try {
+            if (fileUpload && !(await isAdhocFileUploadEnabled())) {
+              throw new Error('fileUpload is not supported by this MCP server.');
+            }
+            target = resolveDatasourceTarget({ datasourceLuid, fileUpload });
+          } catch (error) {
+            return new ArgsValidationError(getExceptionMessage(error)).toErr();
           }
+
+          if (target.kind === 'fileUpload') {
+            return await useRestApi({
+              ...extra,
+              jwtScopes: getDatasourceMetadataTool.requiredApiScopes,
+              callback: async (restApi) => {
+                const readMetadataResult = await restApi.vizqlDataServiceMethods.readMetadata({
+                  datasource: { fileUpload: target.fileUpload },
+                });
+                if (readMetadataResult.isErr()) {
+                  if (readMetadataResult.error === 'file-upload-not-found') {
+                    return Err(new ArgsValidationError(FILE_UPLOAD_NOT_FOUND_MESSAGE));
+                  }
+                  return new FeatureDisabledError(getVizqlDataServiceDisabledError()).toErr();
+                }
+                return Ok(
+                  simplifyReadMetadataResult(readMetadataResult.value, undefined, undefined),
+                );
+              },
+            });
+          }
+
+          const publishedLuid = target.datasourceLuid;
+          const query = getGraphqlQuery(publishedLuid);
           const configWithOverrides = await extra.getConfigWithOverrides();
 
           const isDatasourceAllowedResult = await resourceAccessChecker.isDatasourceAllowed({
-            datasourceLuid,
+            datasourceLuid: publishedLuid,
             workbookLuid,
             supportsWorkbookLuid: true,
             extra,
@@ -206,7 +258,7 @@ export const getGetDatasourceMetadataTool = (
               // Fetching metadata from VizQL Data Service API.
               const readMetadataResult = await restApi.vizqlDataServiceMethods.readMetadata({
                 datasource: {
-                  datasourceLuid,
+                  datasourceLuid: publishedLuid,
                 },
               });
 
@@ -223,7 +275,7 @@ export const getGetDatasourceMetadataTool = (
               const datasourceModelResult = !rules.datasourceModelIsUnavailable
                 ? await restApi.vizqlDataServiceMethods.getDatasourceModel({
                     datasource: {
-                      datasourceLuid,
+                      datasourceLuid: publishedLuid,
                     },
                   })
                 : undefined;
@@ -240,7 +292,7 @@ export const getGetDatasourceMetadataTool = (
                   simplifyReadMetadataResult(
                     readMetadataResult.value,
                     datasourceModelResult?.value,
-                    await resolveDatasourceType(restApi, datasourceLuid, false),
+                    await resolveDatasourceType(restApi, publishedLuid, false),
                   ),
                 );
               }
@@ -256,14 +308,14 @@ export const getGetDatasourceMetadataTool = (
                   simplifyReadMetadataResult(
                     readMetadataResult.value,
                     datasourceModelResult?.value,
-                    await resolveDatasourceType(restApi, datasourceLuid, false),
+                    await resolveDatasourceType(restApi, publishedLuid, false),
                   ),
                 );
               }
 
               const datasourceType = await resolveDatasourceType(
                 restApi,
-                datasourceLuid,
+                publishedLuid,
                 !!listFieldsResult.data.publishedDatasources?.[0],
               );
 

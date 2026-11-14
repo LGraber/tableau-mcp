@@ -27,6 +27,13 @@ import { getResultForTableauVersion } from '../../../utils/isTableauVersionAtLea
 import { Provider } from '../../../utils/provider.js';
 import { buildTruncationInfo, MAX_INT32, TruncationReason } from '../_lib/truncation.js';
 import {
+  FILE_UPLOAD_DESCRIPTION_SUFFIX,
+  fileUploadParamSchema,
+  isAdhocFileUploadEnabled,
+  resolveDatasourceTarget,
+  toVdsDatasource,
+} from '../fileUploads/fileUploadDatasource.js';
+import {
   getEmbeddedDatasourceVersionHint,
   getVizqlDataServiceDisabledError,
 } from '../getVizqlDataServiceDisabledError.js';
@@ -46,7 +53,7 @@ import {
 import { validateFilterValues } from './validators/validateFilterValues.js';
 import { validateQueryAgainstDatasourceMetadata } from './validators/validateQueryAgainstDatasourceMetadata.js';
 
-const paramsSchema = {
+const publishedDatasourceParamsSchema = {
   datasourceLuid: luidSchema,
   workbookLuid: luidSchema
     .optional()
@@ -72,9 +79,19 @@ const paramsSchema = {
     ),
 };
 
+const paramsSchema = {
+  ...publishedDatasourceParamsSchema,
+  datasourceLuid: luidSchema.optional(),
+  fileUpload: fileUploadParamSchema,
+};
+
 const fieldNameParamsSchema = z.object(paramsSchema);
+const publishedFieldNameParamsSchema = z.object(publishedDatasourceParamsSchema);
 // Preserve hidden arguments so unsupported calls reach the runtime version guard.
 const captionParamsSchema = fieldNameParamsSchema
+  .omit({ interpretFieldCaptionsAsFieldNames: true })
+  .passthrough();
+const publishedCaptionParamsSchema = publishedFieldNameParamsSchema
   .omit({ interpretFieldCaptionsAsFieldNames: true })
   .passthrough();
 type QueryDatasourceParamsSchema = z.ZodType<
@@ -103,8 +120,8 @@ export const getQueryDatasourceTool = (
     server,
     name: 'query-datasource',
     minRequiredRole: SiteRole.VIEWER,
-    description: new Provider(() =>
-      getResultForTableauVersion({
+    description: new Provider(async () => {
+      const description = getResultForTableauVersion({
         productVersion,
         mappings: {
           '2026.3.0': queryDatasourceToolDescription20263,
@@ -112,11 +129,20 @@ export const getQueryDatasourceTool = (
           '2025.3.0': queryDatasourceToolDescription20253,
           default: queryDatasourceToolDescription,
         },
-      }),
-    ),
-    paramsSchema: new Provider(() =>
-      rules.fieldNamesAreUnavailable ? captionParamsSchema : fieldNameParamsSchema,
-    ),
+      });
+      return (await isAdhocFileUploadEnabled())
+        ? `${description}${FILE_UPLOAD_DESCRIPTION_SUFFIX}`
+        : description;
+    }),
+    // Without the flag only the published-datasource subset is advertised; the callback handles both.
+    paramsSchema: new Provider(async () => {
+      if (await isAdhocFileUploadEnabled()) {
+        return rules.fieldNamesAreUnavailable ? captionParamsSchema : fieldNameParamsSchema;
+      }
+      return (rules.fieldNamesAreUnavailable
+        ? publishedCaptionParamsSchema
+        : publishedFieldNameParamsSchema) as unknown as QueryDatasourceParamsSchema;
+    }),
     annotations: {
       title: 'Query Datasource',
       readOnlyHint: true,
@@ -125,37 +151,57 @@ export const getQueryDatasourceTool = (
       openWorldHint: false,
     },
     callback: async (
-      { datasourceLuid, workbookLuid, query, limit, interpretFieldCaptionsAsFieldNames },
+      {
+        datasourceLuid,
+        fileUpload,
+        workbookLuid,
+        query,
+        limit,
+        interpretFieldCaptionsAsFieldNames,
+      },
       extra,
     ): Promise<CallToolResult> => {
       const { getConfigWithOverrides } = extra;
       return await queryDatasourceTool.logAndExecute<QueryDatasourceResult>({
         extra,
-        args: { datasourceLuid, workbookLuid, query, interpretFieldCaptionsAsFieldNames },
+        args: {
+          datasourceLuid,
+          fileUpload,
+          workbookLuid,
+          query,
+          interpretFieldCaptionsAsFieldNames,
+        },
         callback: async () => {
           if (interpretFieldCaptionsAsFieldNames && rules.fieldNamesAreUnavailable) {
             return new ArgsValidationError(
               'Querying by internal field names requires Tableau 2025.3 or later. Omit interpretFieldCaptionsAsFieldNames or set it to false and use display captions on this server.',
             ).toErr();
           }
+          let target;
           try {
+            if (fileUpload && !(await isAdhocFileUploadEnabled())) {
+              throw new Error('fileUpload is not supported by this MCP server.');
+            }
+            target = resolveDatasourceTarget({ datasourceLuid, fileUpload });
             validateQuery({ datasourceLuid, query, rules });
           } catch (error) {
             return new ArgsValidationError(getExceptionMessage(error)).toErr();
           }
           const configWithOverrides = await getConfigWithOverrides();
-          const isDatasourceAllowedResult = await resourceAccessChecker.isDatasourceAllowed({
-            datasourceLuid,
-            workbookLuid,
-            supportsWorkbookLuid: true,
-            extra,
-          });
+          if (target.kind === 'published') {
+            const isDatasourceAllowedResult = await resourceAccessChecker.isDatasourceAllowed({
+              datasourceLuid: target.datasourceLuid,
+              workbookLuid,
+              supportsWorkbookLuid: true,
+              extra,
+            });
 
-          if (!isDatasourceAllowedResult.allowed) {
-            return new DatasourceNotAllowedError(isDatasourceAllowedResult.message).toErr();
+            if (!isDatasourceAllowedResult.allowed) {
+              return new DatasourceNotAllowedError(isDatasourceAllowedResult.message).toErr();
+            }
           }
 
-          const datasource: Datasource = { datasourceLuid };
+          const datasource: Datasource = toVdsDatasource(target);
           const maxResultLimit = configWithOverrides.getMaxResultLimit(queryDatasourceTool.name);
           const rowLimit = maxResultLimit
             ? Math.min(maxResultLimit, limit ?? MAX_INT32 - 1)
@@ -174,7 +220,10 @@ export const getQueryDatasourceTool = (
               : { rowLimit: rowLimit + 1 }),
           };
 
-          const credentials = getDatasourceCredentials(datasourceLuid);
+          const credentials =
+            target.kind === 'published'
+              ? getDatasourceCredentials(target.datasourceLuid)
+              : undefined;
           if (credentials) {
             datasource.connections = credentials;
           }

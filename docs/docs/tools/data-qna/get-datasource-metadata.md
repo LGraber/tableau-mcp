@@ -47,6 +47,13 @@ enabled. Ignored for published data sources.
 
 Example: `222ea993-9391-4910-a167-56b3d19b4e3b`
 
+### `fileUpload`
+
+The `fileUpload` object returned by [Upload Data File](upload-data-file.md). Pass it instead of
+`datasourceLuid` to read an uploaded file's fields. Only VizQL Data Service field metadata is
+returned; `datasourceModel` and Metadata API enrichment are omitted. Requires the
+`adhoc-file-upload` feature.
+
 ## Embedded (workbook) data sources
 
 Besides published data sources, this tool can fetch metadata for a data source embedded in a
