@@ -99,6 +99,9 @@
       return metaP.then(function (fields) {
         // ---------------------------------------------------------------------------------------
         // AUTHOR YOUR APP HERE.
+        //   0. Prefer the data app library: declare state keys, named queries and views in
+        //      app-manifest.json, then import { createDataApp } from './data-app-tableau.js', call
+        //      createDataApp() and app.view(viewId).render(draw). Raw queryAsync (step 1) still works.
         //   1. Build a VDS query (fields + optional filters), e.g.:
         //        var query = { fields: [ { fieldCaption: 'Category' },
         //                                 { fieldCaption: 'Sales', function: 'SUM' } ] };
